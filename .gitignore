@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.log
+bench.*.json
+.env
+apikey.local
+# 完整角色库本地生成，不入库（仓库只带 3 个示例）
+data/characters.full.json

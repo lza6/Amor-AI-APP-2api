@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Amor AI 2API · 本地 Demo</title>
+<style>
+  :root {
+    --bg: #0e0b16;
+    --panel: #171226;
+    --panel-2: #1f1833;
+    --line: #2c2444;
+    --text: #ece8f6;
+    --muted: #9c93b8;
+    --pink: #ff5c9d;
+    --violet: #8b6cf6;
+    --ok: #3ddc97;
+    --warn: #ffb454;
+    --err: #ff5f6d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; background:
+      radial-gradient(1200px 600px at 12% -10%, #2a1b3d 0%, transparent 60%),
+      radial-gradient(900px 500px at 88% 110%, #33182c 0%, transparent 55%),
+      var(--bg);
+    color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 12px 18px;
+    border-bottom: 1px solid var(--line); background: rgba(23,18,38,.8); backdrop-filter: blur(8px);
+  }
+  header h1 { font-size: 15px; margin: 0; letter-spacing: .4px; }
+  header h1 span { color: var(--pink); }
+  .pill {
+    font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line);
+    color: var(--muted); white-space: nowrap;
+  }
+  .pill.on { color: var(--ok); border-color: rgba(61,220,151,.4); }
+  .pill.off { color: var(--err); border-color: rgba(255,95,109,.4); }
+  header .spacer { flex: 1; }
+  button {
+    font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
+    padding: 7px 13px; border-radius: 9px; cursor: pointer; transition: .15s;
+  }
+  button:hover { border-color: var(--violet); }
+  button.primary {
+    background: linear-gradient(135deg, var(--pink), var(--violet)); border: none; font-weight: 600;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  main { flex: 1; display: grid; grid-template-columns: 268px 1fr; min-height: 0; }
+  aside { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .search { padding: 10px; }
+  .search input {
+    width: 100%; padding: 8px 11px; border-radius: 9px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); font: inherit;
+  }
+  .charlist { overflow-y: auto; padding: 0 8px 12px; }
+  .char {
+    display: flex; gap: 10px; align-items: center; padding: 8px; border-radius: 10px;
+    cursor: pointer; border: 1px solid transparent;
+  }
+  .char:hover { background: var(--panel); }
+  .char.active { background: var(--panel-2); border-color: var(--violet); }
+  .avatar {
+    width: 34px; height: 34px; border-radius: 50%; flex: 0 0 34px; display: grid; place-items: center;
+    font-weight: 700; font-size: 13px; color: #fff;
+    background: linear-gradient(135deg, #6d4fd8, #ff5c9d);
+  }
+  .char .meta { min-width: 0; }
+  .char .nm { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .char .sub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  section.chat { display: flex; flex-direction: column; min-height: 0; }
+  .chat-head {
+    padding: 11px 18px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center;
+    background: rgba(23,18,38,.5);
+  }
+  .chat-head .t { font-weight: 600; }
+  .chat-head .sub { color: var(--muted); font-size: 12px; }
+  .msgs { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 74%; display: flex; flex-direction: column; gap: 4px; }
+  .msg .bubble {
+    padding: 9px 13px; border-radius: 14px; white-space: pre-wrap; word-break: break-word;
+  }
+  .msg.user { align-self: flex-end; align-items: flex-end; }
+  .msg.user .bubble { background: linear-gradient(135deg, #8b6cf6, #6a4ce0); border-bottom-right-radius: 4px; }
+  .msg.assistant .bubble { background: var(--panel-2); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+  .msg .foot { font-size: 10px; color: var(--muted); }
+  .composer { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; gap: 10px; }
+  .composer input {
+    flex: 1; padding: 11px 14px; border-radius: 11px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); font: inherit;
+  }
+  .composer input:focus, .search input:focus { outline: none; border-color: var(--violet); }
+  .toast {
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: 24px; padding: 9px 16px;
+    border-radius: 10px; background: #2a1f42; border: 1px solid var(--line); font-size: 12px;
+    opacity: 0; transition: .2s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+  .bench-bar { display: flex; gap: 8px; align-items: center; padding: 0 18px 12px; font-size: 12px; color: var(--muted); }
+  .bench-bar .out { font-family: ui-monospace, Consolas, monospace; color: var(--text); }
+  ::-webkit-scrollbar { width: 9px; }
+  ::-webkit-scrollbar-thumb { background: #33294d; border-radius: 9px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Amor AI <span>2API</span></h1>
+  <span class="pill" id="modePill">…</span>
+  <span class="pill" id="charPill">…</span>
+  <label class="pill" style="display:flex;gap:6px;align-items:center;cursor:pointer">
+    <input type="checkbox" id="streamChk" checked /> stream
+  </label>
+  <input id="token" placeholder="API token（网关启用鉴权时）"
+         style="width:190px;padding:5px 9px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--text);font:inherit" />
+  <div class="spacer"></div>
+  <span class="pill" id="latPill">—</span>
+  <button id="benchBtn">并发压测 (16×32)</button>
+</header>
+
+<main>
+  <aside>
+    <div class="search"><input id="q" placeholder="搜索角色 / 关系 …" /></div>
+    <div class="charlist" id="charlist"></div>
+  </aside>
+
+  <section class="chat">
+    <div class="chat-head">
+      <div class="avatar" id="curAvatar">?</div>
+      <div>
+        <div class="t" id="curName">选择一个角色</div>
+        <div class="sub" id="curSub">—</div>
+      </div>
+    </div>
+    <div class="msgs" id="msgs"></div>
+    <div class="bench-bar" id="benchBar" style="display:none">
+      <span>结果：<span class="out" id="benchOut">—</span></span>
+    </div>
+    <div class="composer">
+      <input id="input" placeholder="先说点什么…（Enter 发送）" disabled />
+      <button class="primary" id="sendBtn" disabled>发送</button>
+      <button id="clearBtn" title="清空会话">清空</button>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const API = location.origin;
+let models = [];
+let current = null;
+let history = [];      // {role, content}
+let busy = false;
+
+const $ = (id) => document.getElementById(id);
+function authHeaders(extra) {
+  const h = Object.assign({}, extra || {});
+  const t = ($('token') && $('token').value.trim()) || localStorage.getItem('amor_token') || '';
+  if (t) h['Authorization'] = 'Bearer ' + t;
+  return h;
+}
+function saveToken() {
+  const t = ($('token') && $('token').value.trim()) || '';
+  if (t) localStorage.setItem('amor_token', t); else localStorage.removeItem('amor_token');
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+function initials(name) {
+  return (name || '?').trim().slice(0, 2).toUpperCase();
+}
+
+async function boot() {
+  try {
+    const h = await fetch(API + '/healthz').then(r => r.json());
+    $('modePill').textContent = 'mode: ' + h.mode;
+    $('modePill').className = 'pill ' + (h.mode === 'mock' ? 'off' : 'on');
+    $('charPill').textContent = h.characters + ' 角色';
+    const d = await fetch(API + '/v1/models', { headers: authHeaders() }).then(r => r.json());
+    models = d.data || [];
+    renderList();
+  } catch (e) {
+    toast('网关未启动: ' + e.message);
+  }
+}
+
+function renderList() {
+  const q = $('q').value.trim().toLowerCase();
+  const list = $('charlist');
+  const filtered = models.filter(m => {
+    if (!q) return true;
+    const meta = m.meta || {};
+    return (meta.name || '').toLowerCase().includes(q)
+        || (meta.role || '').toLowerCase().includes(q)
+        || m.id.includes(q);
+  });
+  list.innerHTML = filtered.map(m => {
+    const meta = m.meta || {};
+    return `<div class="char ${current && current.id === m.id ? 'active' : ''}" data-id="${m.id}">
+      <div class="avatar">${esc(initials(meta.name))}</div>
+      <div class="meta">
+        <div class="nm">${esc(meta.name || m.id)}${meta.is_premium ? ' 👑' : ''}</div>
+        <div class="sub">${esc(meta.role || '')} · ${meta.age ?? '?'}y · ${esc(m.id)}</div>
+      </div>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('.char').forEach(el => {
+    el.onclick = () => select(el.dataset.id);
+  });
+}
+
+function select(id) {
+  current = models.find(m => m.id === id) || null;
+  if (!current) return;
+  history = [];
+  const meta = current.meta || {};
+  $('curName').textContent = meta.name || current.id;
+  $('curSub').textContent = `${meta.role || ''} · ${meta.age ?? '?'} 岁 · ${current.id}`;
+  $('curAvatar').textContent = initials(meta.name);
+  $('input').disabled = false;
+  $('sendBtn').disabled = false;
+  $('msgs').innerHTML = '';
+  renderList();
+  addMsg('assistant', `Hi, I'm ${meta.name} 😘 ask me anything`, '开场（本地）');
+  $('input').focus();
+}
+
+function addMsg(role, text, foot) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg ' + role;
+  wrap.innerHTML = `<div class="bubble"></div>${foot ? `<div class="foot">${esc(foot)}</div>` : ''}`;
+  wrap.querySelector('.bubble').textContent = text;
+  $('msgs').appendChild(wrap);
+  $('msgs').scrollTop = $('msgs').scrollHeight;
+  return wrap.querySelector('.bubble');
+}
+
+async function send() {
+  const input = $('input');
+  const text = input.value.trim();
+  if (!text || busy || !current) return;
+  input.value = '';
+  addMsg('user', text);
+  history.push({ role: 'user', content: text });
+  busy = true;
+  $('sendBtn').disabled = true;
+  const stream = $('streamChk').checked;
+  const t0 = performance.now();
+  const bubble = addMsg('assistant', '');
+  let acc = '';
+  let meta = '';
+
+  try {
+    const resp = await fetch(API + '/v1/chat/completions', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ model: current.id, messages: history, stream })
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err?.error?.message || ('HTTP ' + resp.status));
+    }
+    if (stream) {
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const chunk = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 2);
+          if (!chunk.startsWith('data:')) continue;
+          const payload = chunk.slice(5).trim();
+          if (payload === '[DONE]') continue;
+          try {
+            const j = JSON.parse(payload);
+            const delta = j.choices?.[0]?.delta || {};
+            if (delta.content) {
+              acc += delta.content;
+              bubble.textContent = acc;
+              $('msgs').scrollTop = $('msgs').scrollHeight;
+            }
+            if (j.usage) meta = `${j.usage.total_tokens} tok`;
+          } catch (_) { /* 忽略非 JSON 行 */ }
+        }
+      }
+    } else {
+      const j = await resp.json();
+      acc = j.choices?.[0]?.message?.content || '';
+      bubble.textContent = acc;
+      meta = `${j.usage?.total_tokens ?? '?'} tok · ${j.model}`;
+    }
+  } catch (e) {
+    bubble.textContent = '⚠️ ' + e.message;
+    bubble.style.color = 'var(--err)';
+    toast(e.message);
+  } finally {
+    const dt = Math.round(performance.now() - t0);
+    $('latPill').textContent = dt + ' ms';
+    if (meta) {
+      const f = document.createElement('div');
+      f.className = 'foot';
+      f.textContent = meta;
+      bubble.parentElement.appendChild(f);
+    }
+    if (acc) history.push({ role: 'assistant', content: acc });
+    busy = false;
+    $('sendBtn').disabled = false;
+    $('input').focus();
+  }
+}
+
+async function runBench() {
+  const btn = $('benchBtn');
+  btn.disabled = true;
+  $('benchBar').style.display = 'flex';
+  $('benchOut').textContent = 'running…';
+  const C = 16, N = 32;
+  const t0 = performance.now();
+  let ok = 0, fail = 0;
+  const lat = [];
+  const work = async () => {
+    while (true) {
+      if (done >= N) return;
+      done++;
+      const s = performance.now();
+      try {
+        const r = await fetch(API + '/v1/chat/completions', {
+          method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ model: (current || models[0]).id,
+            messages: [{ role: 'user', content: 'hello! how are you today?' }] })
+        });
+        if (!r.ok) throw new Error(r.status);
+        const j = await r.json();
+        if (j.choices?.[0]?.message?.content) { ok++; lat.push(performance.now() - s); }
+        else fail++;
+      } catch (_) { fail++; }
+    }
+  };
+  let done = 0;
+  await Promise.all(Array.from({ length: C }, work));
+  const el = (performance.now() - t0) / 1000;
+  lat.sort((a, b) => a - b);
+  const p = (q) => lat.length ? Math.round(lat[Math.min(lat.length - 1, Math.floor(q * (lat.length - 1)))]) : 0;
+  $('benchOut').textContent =
+    `ok=${ok} fail=${fail} rps=${(N / el).toFixed(1)} p50=${p(.5)}ms p95=${p(.95)}ms (mock 延迟含网关开销)`;
+  btn.disabled = false;
+}
+
+if (localStorage.getItem('amor_token')) $('token').value = localStorage.getItem('amor_token');
+$('token').onchange = () => { saveToken(); boot(); };
+$('q').oninput = renderList;
+$('sendBtn').onclick = send;
+$('benchBtn').onclick = runBench;
+$('clearBtn').onclick = () => { history = []; $('msgs').innerHTML = ''; if (current) select(current.id); };
+$('input').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+boot();
+</script>
+</body>
+</html>
