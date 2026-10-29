@@ -3,8 +3,14 @@
 把 `com.amorai.chat`（Amor AI 1.8.8）的角色人格与请求参数复刻成一个标准 OpenAI 兼容网关，
 支持 **mock（零成本）** 与 **real（BYOK，自己的 key）** 双模，附带 demo 页、压测脚本与浏览器端到端验证。
 
+![demo](static/demo.png)
+
 > 逆向报告：[`docs/PROTOCOL.md`](docs/PROTOCOL.md) ·
-> new-api 对接：[`docs/HANDOFF-TO-NEWAPI.md`](docs/HANDOFF-TO-NEWAPI.md)
+> new-api 对接操作手册：[`docs/NEW-API-GUIDE.md`](docs/NEW-API-GUIDE.md) ·
+> new-api 技术契约（含路线 B）：[`docs/HANDOFF-TO-NEWAPI.md`](docs/HANDOFF-TO-NEWAPI.md)
+>
+> 自检四件套：`tools/test_edges.py`（错误路径 25/25）· `tools/verify_newapi.py`（接前自检 8/8）·
+> `bench.py`（压测）· `verify_demo.py`（浏览器 E2E 8/8）
 
 ---
 
