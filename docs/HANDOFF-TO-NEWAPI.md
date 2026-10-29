@@ -122,14 +122,17 @@ amor-1,amor-2,amor-3,…（连续到 amor-102）
 | 网关返回 | 含义 | new-api 表现 |
 |---|---|---|
 | 200 | 正常 | 计费按 usage |
+| 400 `invalid_request_error` | 请求结构/参数类型不合法（body 非对象、`messages` 非数组、`max_tokens` 非正整数等） | 属调用方 bug，**不要重试**、不计费 |
 | 401 `invalid api key` | `--auth-token` 与渠道密钥不一致 | 渠道测试失败，改密钥 |
 | 404 `model_not_found` | `amor-N` 超范围（>102） | 检查模型列表 |
+| 413 `request body too large` | 请求体 > 8 MB | 属调用方 bug，不重试 |
 | 502 `network: …` | 上游不可达（real 模式） | 检查 `--base-url` / `--proxy` → 服网络 |
 | 502 `malformed upstream response` | 上游返回非 OpenAI JSON | 检查 base-url 是否指错服务 |
 | 504 `upstream timeout after Ns` | 上游超时 | 调大 `--timeout` |
 | 500 `upstream_error` 透传 | 上游自身报错（如 key 失效/欠费） | 网关不吞错，原样上抛 |
 
-网关**不吞错误、不伪造成功**：上游失败一律 5xx，绝不返回空壳 200。
+网关**不吞错误、不伪造成功**：上游失败一律 5xx，绝不返回空壳 200；客户端输入错误一律 4xx 且不断连
+（33 条边界用例实测见 `tools/test_edges.py`）。
 
 ---
 
@@ -156,12 +159,25 @@ amor-1,amor-2,amor-3,…（连续到 amor-102）
 
 ## 9. 验收清单
 
+先用一条命令跑完全部机器可判的项：
+
+```bash
+python tools/verify_newapi.py                                  # 无鉴权网关：8/8
+python tools/verify_newapi.py --token sk-amor-local             # 启用 --auth-token：9/9
+python tools/verify_newapi.py --base http://127.0.0.1:8947      # real 模式（你的 key）
+```
+
+它断言的是：`/v1/models` 可列 102 条 · 非流式 `usage` 计费锚点 · 流式 chunk/`[DONE]`/内容 ·
+流式末帧带 `usage`（new-api 的 openai SDK 会带 `stream_options.include_usage`，网关必须容忍）·
+裸模型名透传可用 · 未知模型 → 404 `model_not_found` · 错误信封三字段齐全 · 401 分支。
+
+剩下需要人眼确认的：
+
 - [ ] `GET /healthz` 返回 `status: ok`
 - [ ] `GET /v1/models` 返回 102 条，`id` 形如 `amor-1`
-- [ ] 非流式 `POST /v1/chat/completions` 返回 200 且 `choices[0].message.content` 非空
-- [ ] 流式返回 `data: {...}` 分块 + 最后 `data: [DONE]`
 - [ ] new-api 渠道测试通过
 - [ ] new-api 里发一条消息，能收到角色化回复（口吻与角色名一致）
+- [ ] `python tools/test_edges.py` 25/25（错误路径不回 500、不断连）
 - [ ] `python bench.py --concurrency 16 --requests 96` 失败率为 0
 - [ ] `python verify_demo.py` 8/8 通过
 

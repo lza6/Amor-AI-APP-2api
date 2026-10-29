@@ -112,7 +112,10 @@ Amor AI 没有自有 AI 后端。它把「角色 prompt + 聊天历史」直接�
 
 **错误率全程 0%。** 高并发下的 p95 抬升来自 Python 线程 + GIL 排队，不是协议问题。
 
-上游异常路径（对本地假上游实测）：
+复测（修完输入校验层后重跑，同一台机器）：8×64 → 38.7 RPS / p50 158 ms；32×160 → 113.0 RPS / p50 169 ms；
+流式 16×64 → 57.8 RPS / p50 170 ms，**失败 0**。校验层对吞吐无可测量影响。
+
+上游异常路径（对本地假上游实测，`tools/test_edges.py --upstream`）：
 
 | 场景 | 网关返回 |
 |---|---|
@@ -120,6 +123,31 @@ Amor AI 没有自有 AI 后端。它把「角色 prompt + 聊天历史」直接�
 | 上游返回非 JSON | 502 `malformed upstream response` |
 | 上游超时（`--timeout 1` + 3s 慢响应） | 504 `upstream timeout after 1.0s` |
 | 上游端口不通 | 502 `network: [WinError 10061]` |
+
+---
+
+## 客户端错误契约（输入校验）
+
+所有客户端错误都返回 OpenAI 风格信封 `{"error":{message,type,code}}`，**不会出现 500，也不会断连**：
+
+| 输入 | 状态码 | type |
+|---|---|---|
+| body 不是 JSON 对象（数组 / 字符串 / 坏 JSON） | 400 | `invalid_request_error` |
+| `messages` 不是数组 / 元素不是对象 / `content` 非字符串 | 400 | `invalid_request_error` |
+| `model` 非字符串 | 400 | `invalid_request_error` |
+| `max_tokens` 非正整数、`temperature` 等非数字 | 400 | `invalid_request_error` |
+| `model` 不认识 | 404 | `model_not_found` |
+| 未知路由 | 404 | `not_found` |
+| 启用 `--auth-token` 而 Bearer 缺失/错误 | 401 | `authentication_error` |
+| 请求体 > 8 MB | 413 | `invalid_request_error` |
+
+回归脚本（mock 25 条 + real/上游 8 条 = 33 条，全部基于真实 HTTP 响应）：
+
+```bash
+python tools/test_edges.py                                        # 25/25
+python tools/test_edges.py --base http://127.0.0.1:8947 --upstream http://127.0.0.1:8950   # 33/33
+python tools/test_edges.py --base http://127.0.0.1:8948 --token s3cret                     # 28/28
+```
 
 ---
 
@@ -144,6 +172,8 @@ python verify_demo.py --token sk-amor-local # 启用了 --auth-token
 | `demo.html` | 单页 demo（角色列表 / 流式打字机 / 前端并发压测 / token 输入） |
 | `bench.py` | 压测脚本（sync / stream，多轮，输出 p50/p95/p99） |
 | `verify_demo.py` | Playwright 真实浏览器端到端验证 |
+| `tools/test_edges.py` | 边界/错误路径回归（输入校验、413、401、上游 500/畸形/慢响应） |
+| `tools/verify_newapi.py` | new-api 渠道接前自检（models/流式/usage 计费锚点/错误信封） |
 | `tools/fake_openai.py` | 本地假上游，用于验证 real 模式（零外部请求） |
 | `tools/fetch_characters.py` | 从 Firebase Remote Config 拉完整角色库（102 个）与非凭证参数快照 |
 | `data/characters.json` | **示例角色 3 个**（仓库版；完整库由上面的脚本生成到 `characters.full.json`，已被 gitignore） |
@@ -171,8 +201,10 @@ python verify_demo.py --token sk-amor-local # 启用了 --auth-token
 ## 一键自检
 
 ```bash
-python -c "import ast,sys;[ast.parse(open(f,encoding='utf-8').read()) for f in ['server.py','amor_client.py','bench.py','verify_demo.py']];print('syntax ok')"
+python -c "import ast,sys;[ast.parse(open(f,encoding='utf-8').read()) for f in ['server.py','amor_client.py','bench.py','verify_demo.py','tools/test_edges.py']];print('syntax ok')"
 python server.py --port 8946 &
+python tools/test_edges.py            # 25/25
+python tools/verify_newapi.py         # 8/8（接 new-api 前必跑）
 python bench.py --concurrency 16 --requests 96
 python verify_demo.py
 curl http://127.0.0.1:8946/stats

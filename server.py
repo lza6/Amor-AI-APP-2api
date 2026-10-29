@@ -37,6 +37,11 @@ import amor_client as ac
 
 BASE_DIR = Path(__file__).resolve().parent
 START_TS = time.time()
+# 单请求体上限：超过即 413 且不把字节读进内存（历史/角色库都是几 KB 级）
+MAX_BODY_BYTES = 8 * 1024 * 1024
+# 超限 body 最多丢弃这么多字节再回 413：否则客户端还在写、服务端已关连接，
+# 客户端只会看到 RST（WinError 10053）而拿不到错误信封。
+MAX_BODY_DRAIN_BYTES = 32 * 1024 * 1024
 
 
 def slugify(name: str) -> str:
@@ -139,17 +144,34 @@ class Gateway:
         return {"object": "list", "data": data}
 
     def chat(self, body: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-        """返回 (model_id, openai_style_completion)。"""
+        """返回 (model_id, openai_style_completion)。
+
+        客户端输入一律先校验：任何类型不符都抛 ValueError（→ 400），
+        绝不让 AttributeError/TypeError 冒成 500 或断连。
+        """
         model = body.get("model") or ac.DEFAULT_MODEL
+        if not isinstance(model, str):
+            raise ValueError("model must be a string")
         # 允许 "amor-7@<upstream-model>" 指定透传给上游的模型名（默认 gpt-4o-mini）
         upstream_model = None
-        if "@" in str(model):
-            model, upstream_model = str(model).split("@", 1)
+        if "@" in model:
+            model, upstream_model = model.split("@", 1)
         character = self.resolve(model)
         if character is None:
             raise KeyError(f"unknown model: {model}")
 
         incoming = body.get("messages") or []
+        if not isinstance(incoming, list):
+            raise ValueError("messages must be an array of objects")
+        for m in incoming:
+            if not isinstance(m, dict):
+                raise ValueError("each message must be an object")
+            if m.get("role") is not None and not isinstance(m.get("role"), str):
+                raise ValueError("message role must be a string")
+            content = m.get("content")
+            if content is not None and not isinstance(content, str):
+                raise ValueError("message content must be a string or null")
+
         system_override = next(
             (m["content"] for m in incoming if m.get("role") == "system" and m.get("content")),
             None,
@@ -162,13 +184,25 @@ class Gateway:
         if system_override:
             messages[0] = {"role": "system", "content": system_override}
 
-        overrides = {
-            k: body[k] for k in
-            ("temperature", "max_tokens", "frequency_penalty", "presence_penalty")
-            if body.get(k) is not None
-        }
-        if body.get("max_tokens") is None and body.get("max_completion_tokens"):
-            overrides["max_tokens"] = body["max_completion_tokens"]
+        overrides: dict[str, Any] = {}
+        for key in ("temperature", "max_tokens", "frequency_penalty", "presence_penalty"):
+            value = body.get(key)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{key} must be a number")
+            if key == "max_tokens":
+                if not float(value).is_integer() or value <= 0:
+                    raise ValueError("max_tokens must be a positive integer")
+                overrides[key] = int(value)
+            else:
+                overrides[key] = float(value)
+        if "max_tokens" not in overrides and body.get("max_completion_tokens") is not None:
+            legacy = body["max_completion_tokens"]
+            if isinstance(legacy, bool) or not isinstance(legacy, (int, float)) \
+                    or not float(legacy).is_integer() or legacy <= 0:
+                raise ValueError("max_completion_tokens must be a positive integer")
+            overrides["max_tokens"] = int(legacy)
         if upstream_model:
             overrides["model"] = upstream_model
 
@@ -225,6 +259,16 @@ class Handler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, UnicodeDecodeError):
             return None
 
+    def _drain(self, length: int, limit: int) -> bool:
+        """分块丢弃超限请求体，返回 False 表示超过 limit 已放弃。"""
+        remaining = min(length, limit)
+        while remaining > 0:
+            chunk = self.rfile.read(min(65536, remaining))
+            if not chunk:
+                return False
+            remaining -= len(chunk)
+        return length <= limit
+
     # ---------------- 路由 ----------------
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -275,9 +319,22 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/v1/") and not self._authorized():
             self._error(401, "invalid api key", "authentication_error")
             return
+        try:
+            declared = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            self._error(400, "invalid Content-Length header")
+            return
+        if declared > MAX_BODY_BYTES:
+            if not self._drain(declared, MAX_BODY_DRAIN_BYTES):
+                self.close_connection = True  # 太大，不值得读，直接切断
+            self._error(413, f"request body too large (>{MAX_BODY_BYTES} bytes)")
+            return
         body = self._read_json()
         if body is None:
             self._error(400, "invalid JSON body")
+            return
+        if not isinstance(body, dict):
+            self._error(400, "request body must be a JSON object")
             return
         if path == "/v1/chat/completions":
             self._handle_chat(body)
@@ -299,6 +356,11 @@ class Handler(BaseHTTPRequestHandler):
         except KeyError as exc:
             self.gateway.metrics.record(False, time.time() - t0, str(model_req))
             self._error(404, str(exc).strip("'\""), "model_not_found")
+            return
+        except ValueError as exc:
+            # 请求结构/参数类型不合法：客户端问题，不回 500 也不打上游
+            self.gateway.metrics.record(False, time.time() - t0, str(model_req))
+            self._error(400, str(exc), "invalid_request_error")
             return
         except ac.UpstreamError as exc:
             self.gateway.metrics.record(False, time.time() - t0, str(model_req))
@@ -365,7 +427,13 @@ class Handler(BaseHTTPRequestHandler):
         t0 = time.time()
         text = body.get("input")
         if isinstance(text, list):
-            text = " ".join(str(x) for x in text)
+            if not all(isinstance(x, str) for x in text):
+                self._error(400, "input array must contain only strings")
+                return
+            text = " ".join(text)
+        elif text is not None and not isinstance(text, str):
+            self._error(400, "input must be a string or an array of strings")
+            return
         try:
             result = self.gateway.upstream.moderate(text or "")
         except ac.UpstreamError as exc:
